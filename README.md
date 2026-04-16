@@ -35,7 +35,7 @@ Open the AI you already use — [claude.ai](https://claude.ai), [gemini.google.c
 
 Copy the response into a file called `mood.md` in your project root. Done.
 
-That's it. Three steps, zero setup, works right now.
+That's it. 
 
 ---
 
