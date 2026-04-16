@@ -1,0 +1,464 @@
+#!/usr/bin/env python3
+"""
+mood-protocol: Generate a mood.md from a folder of visual references.
+
+Drop images into a /mood/ folder — screenshots of Figma moodboards,
+colour palettes, typography samples, spatial references, annotated canvases —
+and this script will read them through a vision model and generate a
+structured mood.md that any AI agent can use for design direction.
+
+Usage:
+    python generate_mood.py                           # scans ./mood/ → generates ./mood.md
+    python generate_mood.py --model gemini            # use Gemini instead of Claude
+    python generate_mood.py --input ./my-refs         # custom input folder
+    python generate_mood.py --output ./project        # custom output location
+    python generate_mood.py --name "Brand V2"         # give the mood a name
+
+Requires (install only what you need):
+    For Claude:   pip install anthropic       + set ANTHROPIC_API_KEY
+    For Gemini:   pip install google-genai    + set GEMINI_API_KEY
+"""
+
+import base64
+import argparse
+import sys
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Image handling
+# ---------------------------------------------------------------------------
+# These are the image types both Claude and Gemini vision can process.
+# We ignore everything else (PDFs, .ai files, etc.)
+
+SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def get_image_media_type(filepath: Path) -> str:
+    """
+    Maps a file extension to the MIME type the API expects.
+    Think of this as telling the API "this is a JPEG" vs "this is a PNG"
+    so it knows how to decode the image data.
+    """
+    extension_to_mime = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    return extension_to_mime[filepath.suffix.lower()]
+
+
+def encode_image_to_base64(filepath: Path) -> str:
+    """
+    Reads an image file and converts it to base64 text.
+
+    Why base64? The API can't receive a file directly — it needs the image
+    data embedded in the JSON request. Base64 is a way of encoding binary
+    data (the image) as plain text characters. It's like putting a painting
+    in an envelope by describing every pixel as a letter.
+    """
+    with open(filepath, "rb") as f:
+        return base64.standard_b64encode(f.read()).decode("utf-8")
+
+
+def read_image_bytes(filepath: Path) -> bytes:
+    """
+    Reads the raw bytes of an image file.
+    Gemini's SDK can work with raw bytes directly, so we don't always
+    need the base64 step.
+    """
+    with open(filepath, "rb") as f:
+        return f.read()
+
+
+def collect_images(folder: Path) -> list[Path]:
+    """
+    Scans the mood folder and returns all supported image files,
+    sorted alphabetically so the output is deterministic
+    (same input → same order every time).
+    """
+    images = [
+        f for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
+    images.sort(key=lambda f: f.name.lower())
+    return images
+
+
+# ---------------------------------------------------------------------------
+# Notes handling
+# ---------------------------------------------------------------------------
+
+def read_notes(folder: Path) -> str | None:
+    """
+    Checks if the designer left a notes.md in the mood folder.
+    This is optional — it lets you add freeform thoughts like
+    "I want this to feel like a Sunday morning magazine" or
+    "NOT corporate, NOT glassmorphic."
+    """
+    notes_path = folder / "notes.md"
+    if notes_path.exists():
+        return notes_path.read_text(encoding="utf-8").strip()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The vision prompt — this is the core craft of the whole tool
+# ---------------------------------------------------------------------------
+# IMPORTANT: This prompt is IDENTICAL for both Claude and Gemini.
+# That's the whole point of a protocol — the design intelligence
+# lives in the prompt, not in the API plumbing.
+
+SYSTEM_PROMPT = """You are an expert design director analysing a moodboard.
+
+You are looking at images that a designer has curated to communicate the visual 
+direction for a project. These might be:
+- Screenshots of annotated Figma moodboard canvases (with sticky notes, labels, groupings)
+- Individual reference images (photography, UI screenshots, textures, palettes)
+- Typography specimens or colour palette exports
+- Anti-references (things the designer explicitly does NOT want)
+
+Your job is NOT to describe what's literally in each image. Your job is to 
+extract the DESIGN INTENT — what these images collectively communicate about 
+how something should look and feel.
+
+Think like a designer receiving a moodboard from a creative director. Ask yourself:
+- What's the emotional register here?
+- What colour temperature and palette is being established?
+- What typographic character is being signalled?
+- How dense or spacious should the result feel?
+- What material/surface qualities are being referenced?
+- What era, movement, or cultural references are present?
+- What is being explicitly rejected (anti-references)?
+
+Pay close attention to any handwritten notes, sticky notes, annotations, or 
+labels visible in the images — these are the designer's direct commentary and 
+should be weighted heavily.
+
+If a filename contains "not" or "anti" or similar negative signals, treat that 
+image as an anti-reference (what to avoid)."""
+
+
+def build_user_prompt(image_names: list[str], notes: str | None, mood_name: str) -> str:
+    """
+    Builds the prompt that tells the vision model what we want back.
+    The structure here mirrors the mood.md format we want generated.
+    This prompt is shared by ALL backends — the protocol is model-agnostic.
+    """
+    prompt = f"""Analyse this moodboard and generate a structured mood file called "{mood_name}".
+
+The images in this moodboard are named: {', '.join(image_names)}
+
+"""
+    if notes:
+        prompt += f"""The designer also left these notes:
+
+---
+{notes}
+---
+
+Weight these notes heavily — they represent direct intent.
+
+"""
+
+    prompt += """Generate the mood file in this exact markdown structure:
+
+# Mood: [Name]
+
+## Essence
+[2-3 sentences capturing the overall feeling. Write this as a creative direction 
+brief — evocative, specific, actionable. Not "modern and clean" but something a 
+designer could actually work from.]
+
+## Colour
+- **Temperature:** [warm / cool / neutral + nuance]
+- **Palette:** [list key colours as hex values with semantic names, e.g., #1a1a2e "deep night"]
+- **Contrast:** [high / medium / low + how contrast is used]
+- **Saturation:** [vivid / muted / desaturated + character]
+
+## Typography
+- **Character:** [describe the typographic personality — e.g., "editorial serif with quiet authority"]
+- **Weight distribution:** [how type weight creates hierarchy]
+- **Density:** [airy / balanced / compact + what that achieves]
+- **Suggested pairings:** [if detectable, suggest font pairings or categories]
+
+## Space & Layout
+- **Rhythm:** [how space is used — generous, dense, asymmetric, etc.]
+- **Grid character:** [rigid / fluid / broken + intent]
+- **Scale relationships:** [how size contrast creates hierarchy]
+
+## Texture & Material
+- **Surface quality:** [flat / tactile / layered / dimensional]
+- **Material references:** [what physical materials this evokes — paper, glass, stone, fabric]
+- **Finish:** [matte / glossy / rough / polished]
+
+## Emotional Register
+[A short paragraph — how should someone FEEL using/viewing the designed thing? 
+Be specific and evocative. Reference cultural touchpoints if relevant.]
+
+## Design Principles
+[3-5 short principles extracted from the moodboard that should guide decisions.
+Format: **Principle name** — one-sentence explanation.]
+
+## References
+[For each image analysed, a brief note on what design signal it contributes.
+Include any visible annotations or notes from the designer.]
+
+## Anti-References
+[Things this mood explicitly is NOT. If anti-reference images were provided, 
+describe what they signal to avoid. If none were provided, infer from the 
+overall direction what would clash with it.]
+
+## Agent Instructions
+[A concise paragraph written directly to an AI agent, telling it how to apply 
+this mood when generating UI, choosing colours, writing CSS, or making design 
+decisions. Be specific and actionable.]
+
+Important:
+- Extract actual hex colour values where visible in palette images
+- If you can see annotations or sticky notes, quote them
+- Be specific, not generic. "Warm" means nothing. "The warmth of a dimly lit 
+  bookshop at 6pm" is useful.
+- The Agent Instructions section is critical — this is what makes the file 
+  actually work in practice."""
+
+    return prompt
+
+
+# ---------------------------------------------------------------------------
+# Backend: Claude (Anthropic)
+# ---------------------------------------------------------------------------
+
+def analyse_with_claude(
+    images: list[Path],
+    notes: str | None,
+    mood_name: str,
+) -> str:
+    """
+    Sends all the moodboard images to Claude's vision API.
+
+    We import anthropic HERE rather than at the top of the file.
+    Why? So people who only use Gemini don't need to install the
+    anthropic package, and vice versa. The import only happens
+    when you actually choose this backend.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        print("\n  ✗ anthropic package not installed.")
+        print("    Run: pip install anthropic")
+        print("    And set ANTHROPIC_API_KEY in your environment.\n")
+        sys.exit(1)
+
+    client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY from environment
+
+    # Build the message content: alternating images and their filenames
+    # so the model knows which image is which
+    content = []
+    for image_path in images:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": get_image_media_type(image_path),
+                "data": encode_image_to_base64(image_path),
+            },
+        })
+        content.append({
+            "type": "text",
+            "text": f"[Image: {image_path.name}]",
+        })
+
+    # Add the main analysis prompt at the end
+    image_names = [img.name for img in images]
+    content.append({
+        "type": "text",
+        "text": build_user_prompt(image_names, notes, mood_name),
+    })
+
+    print(f"  Sending {len(images)} images to Claude for analysis...")
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    return response.content[0].text
+
+
+# ---------------------------------------------------------------------------
+# Backend: Gemini (Google)
+# ---------------------------------------------------------------------------
+
+def analyse_with_gemini(
+    images: list[Path],
+    notes: str | None,
+    mood_name: str,
+) -> str:
+    """
+    Sends all the moodboard images to Gemini's vision API.
+
+    Gemini's SDK works a bit differently from Claude's:
+    - Instead of a system prompt parameter, we pass it when configuring
+    - Images are sent as Part objects with inline_data (raw bytes + mime type)
+    - The response structure is simpler — just .text on the response
+
+    But the PROMPT is identical. Same design intelligence, different plumbing.
+    """
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        print("\n  ✗ google-genai package not installed.")
+        print("    Run: pip install google-genai")
+        print("    And set GEMINI_API_KEY in your environment.\n")
+        sys.exit(1)
+
+    import os
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("\n  ✗ GEMINI_API_KEY environment variable not set.")
+        print("    Get an API key at https://aistudio.google.com/apikey\n")
+        sys.exit(1)
+
+    # Create the Gemini client
+    # The system_instruction is Gemini's equivalent of Claude's system prompt
+    client = genai.Client(api_key=api_key)
+
+    # Build the content parts: images interleaved with their filenames,
+    # just like we do for Claude — same pattern, different format
+    parts = []
+    for image_path in images:
+        # Gemini takes raw bytes wrapped in a Part object
+        parts.append(
+            types.Part.from_bytes(
+                data=read_image_bytes(image_path),
+                mime_type=get_image_media_type(image_path),
+            )
+        )
+        parts.append(
+            types.Part.from_text(text=f"[Image: {image_path.name}]")
+        )
+
+    # Add the main analysis prompt
+    image_names = [img.name for img in images]
+    parts.append(
+        types.Part.from_text(
+            text=build_user_prompt(image_names, notes, mood_name)
+        )
+    )
+
+    print(f"  Sending {len(images)} images to Gemini for analysis...")
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=types.Content(
+            role="user",
+            parts=parts,
+        ),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=4096,
+        ),
+    )
+
+    return response.text
+
+
+# ---------------------------------------------------------------------------
+# Backend router
+# ---------------------------------------------------------------------------
+# This maps the --model flag to the right function.
+# Adding a new backend (GPT, Llama, etc.) is as simple as writing
+# a new analyse_with_X function and adding it here.
+
+BACKENDS = {
+    "claude": analyse_with_claude,
+    "gemini": analyse_with_gemini,
+}
+
+
+# ---------------------------------------------------------------------------
+# Main flow
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate a mood.md from a folder of visual references.",
+        epilog="Example: python generate_mood.py --model gemini --name 'Editorial Warmth'",
+    )
+    parser.add_argument(
+        "--input", "-i",
+        type=Path,
+        default=Path("./mood"),
+        help="Path to folder containing moodboard images (default: ./mood)",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=Path,
+        default=Path("."),
+        help="Directory where mood.md will be written (default: current directory)",
+    )
+    parser.add_argument(
+        "--name", "-n",
+        type=str,
+        default="Untitled Mood",
+        help="Name for this mood (default: 'Untitled Mood')",
+    )
+    parser.add_argument(
+        "--model", "-m",
+        type=str,
+        choices=list(BACKENDS.keys()),
+        default="claude",
+        help="Which vision model to use (default: claude)",
+    )
+    args = parser.parse_args()
+
+    # ---- Validate input ----
+    if not args.input.exists():
+        print(f"\n  ✗ Mood folder not found: {args.input}")
+        print(f"    Create it and add some images, then run again.\n")
+        sys.exit(1)
+
+    images = collect_images(args.input)
+    if not images:
+        print(f"\n  ✗ No images found in {args.input}")
+        print(f"    Supported formats: {', '.join(SUPPORTED_EXTENSIONS)}\n")
+        sys.exit(1)
+
+    notes = read_notes(args.input)
+
+    # ---- Show what we found ----
+    print(f"\n  ◉ mood-protocol")
+    print(f"  ─────────────────────────────")
+    print(f"  Mood name:  {args.name}")
+    print(f"  Model:      {args.model}")
+    print(f"  Source:     {args.input.resolve()}")
+    print(f"  Images:     {len(images)}")
+    for img in images:
+        # Mark anti-references with a different symbol so the designer
+        # can see at a glance which images are "avoid this" signals
+        prefix = "  ⊘" if "not" in img.stem.lower() or "anti" in img.stem.lower() else "  ◦"
+        print(f"    {prefix} {img.name}")
+    if notes:
+        print(f"  Notes:      ✓ found notes.md")
+    print(f"  ─────────────────────────────")
+
+    # ---- Analyse using the chosen backend ----
+    analyse_fn = BACKENDS[args.model]
+    mood_content = analyse_fn(images, notes, args.name)
+
+    # ---- Write output ----
+    output_path = args.output / "mood.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(mood_content, encoding="utf-8")
+
+    print(f"  ✓ Generated {output_path.resolve()}")
+    print(f"  ─────────────────────────────\n")
+
+
+if __name__ == "__main__":
+    main()
