@@ -19,9 +19,31 @@ We can write `SKILL.md` files to tell agents *how* to build things. But we have 
 
 Together, they give an agent both craft knowledge and aesthetic direction — the full picture of what a designer brings to a project.
 
-## Quick start
+## Quick start (no setup required)
 
-### 1. Install (pick your model)
+The simplest way to generate a `mood.md` — no code, no API keys, no terminal.
+
+### 1. Screenshot your moodboard
+
+Export your annotated Figma canvas as a PNG, or screenshot your Pinterest/Miro board. Sticky notes, labels, and spatial groupings are all valuable — the AI reads everything visible.
+
+### 2. Upload and prompt
+
+Open the AI you already use — [claude.ai](https://claude.ai), [gemini.google.com](https://gemini.google.com), [chatgpt.com](https://chatgpt.com) — upload your images, and paste the prompt from **[PROMPT.md](PROMPT.md)**.
+
+### 3. Save the output
+
+Copy the response into a file called `mood.md` in your project root. Done.
+
+That's it. Three steps, zero setup, works right now.
+
+---
+
+## Automated version (for repeat use)
+
+If you want to run this from the command line without copy-pasting, there's a Python script that does it in one command.
+
+### Install (pick your model)
 
 ```bash
 # For Claude
@@ -33,39 +55,17 @@ pip install google-genai
 export GEMINI_API_KEY=your-key-here
 ```
 
-### 2. Create a mood folder
+### Create a mood folder and generate
 
 ```
 my-project/
   mood/
     your-images-here.png
-  mood.md  ← generated
+    notes.md              ← optional designer annotations
+  mood.md                 ← generated
 ```
 
-### 3. Drop in your references
-
-The best input is a **screenshot of your annotated Figma moodboard** — sticky notes, labels, groupings, and all. The vision model reads everything visible, including your handwritten annotations.
-
-You can also use individual images: palette exports, typography specimens, UI screenshots, photographs, textures — anything that communicates visual direction.
-
-**Anti-references** (things you don't want) are just as useful. Prefix filenames with `not-` or `anti-` to signal them:
-```
-mood/
-  warm-editorial-layout.png
-  colour-palette.png
-  not-corporate-dashboard.png    ← anti-reference
-  anti-glassmorphism.png         ← anti-reference
-```
-
-**Optional: add notes.** Create a `notes.md` in the mood folder with any freeform thoughts:
-```markdown
-I want this to feel like a Sunday morning magazine.
-Warm, unhurried, confident but not loud.
-Think Kinfolk meets Stripe — editorial warmth with technical credibility.
-NOT: corporate SaaS, NOT: glassmorphic, NOT: dark mode gamer aesthetic.
-```
-
-### 4. Generate
+Drop your reference images into the `mood/` folder, then:
 
 ```bash
 python generate_mood.py --name "Editorial Warmth"
@@ -74,7 +74,13 @@ python generate_mood.py --name "Editorial Warmth"
 python generate_mood.py --model gemini --name "Editorial Warmth"
 ```
 
-That's it. Your `mood.md` is ready.
+**Anti-references** (things you don't want) are signalled by prefixing filenames with `not-` or `anti-`:
+```
+mood/
+  warm-editorial-layout.png
+  colour-palette.png
+  not-corporate-dashboard.png    ← anti-reference
+```
 
 ### Options
 
