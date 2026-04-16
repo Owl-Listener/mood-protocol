@@ -1,4 +1,4 @@
-# Mood: Untitled Mood
+# Mood: Example Mood
 
 ## Essence
 Handmade mythology for the modern screen. This is the energy of a linocut pulled from a warm press, creatures and symbols crowding the frame with the confidence of folk art that has been telling stories for centuries. Dense, graphic, unapologetically imperfect, and alive with the kind of character that only comes from the human hand.
