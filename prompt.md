@@ -15,6 +15,7 @@ That's it. No setup, no API keys, no code.
 
 - The best input is a screenshot of your annotated Figma/Miro canvas, sticky notes and all
 - Include anti-references (things you DON'T want) and mention them in the prompt
+- Name anti-reference images with a `not-` or `anti-` prefix — e.g. `not-corporate-dashboard.png`, `anti-pattern.jpg` — so the prompt below can treat them correctly
 - Add your own notes alongside the prompt, e.g., "This is for a reading app. Think Kinfolk meets Stripe."
 - Name your mood something evocative, not generic
 
@@ -33,6 +34,8 @@ I've uploaded images that represent the visual direction for a project. These mi
 Your job is NOT to describe what's literally in each image. Your job is to extract the DESIGN INTENT — what these images collectively communicate about how something should look and feel.
 
 Think like a designer receiving a moodboard from a creative director. Pay close attention to any handwritten notes, sticky notes, annotations, or labels visible in the images — these are direct commentary and should be weighted heavily.
+
+If any uploaded image's filename begins with `not-` or `anti-` (e.g. `not-corporate.png`, `anti-pattern.jpg`), treat that image as an anti-reference: something the mood must explicitly NOT look or feel like. Do not absorb its aesthetic into the mood; instead, use it to populate the Anti-References section with specific things to avoid. Only that exact prefix counts — filenames like `notebook-ui.png` or `antique-type.png` are normal references.
 
 **The mood is called: [REPLACE WITH YOUR MOOD NAME]**
 

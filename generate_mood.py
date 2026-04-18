@@ -13,10 +13,16 @@ Usage:
     python generate_mood.py --input ./my-refs         # custom input folder
     python generate_mood.py --output ./project        # custom output location
     python generate_mood.py --name "Brand V2"         # give the mood a name
+    python generate_mood.py --claude-model <id>       # pin a specific Claude snapshot
+    python generate_mood.py --gemini-model <id>       # pin a specific Gemini model
+    python generate_mood.py --max-tokens 16384        # raise the output cap for dense moods
+    python generate_mood.py --dry-run                 # preview the prompt; no API call, no tokens
 
 Requires (install only what you need):
-    For Claude:   pip install anthropic       + set ANTHROPIC_API_KEY
-    For Gemini:   pip install google-genai    + set GEMINI_API_KEY
+    For Claude:   python -m pip install -r requirements-claude.txt  + set ANTHROPIC_API_KEY
+    For Gemini:   python -m pip install -r requirements-gemini.txt  + set GEMINI_API_KEY
+
+    (Bare 'pip install anthropic' / 'pip install google-genai' also works.)
 """
 
 import base64
@@ -32,6 +38,18 @@ from pathlib import Path
 # We ignore everything else (PDFs, .ai files, etc.)
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+# Spec version stamped into the footer of every generated mood.md, per SPEC.md.
+SPEC_VERSION = "0.1.0"
+
+# Default model strings. Override on the CLI with --claude-model / --gemini-model
+# when a newer snapshot is out, so the script doesn't rot as models are retired.
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
+# A dense mood.md with many images, references, and anti-references can run
+# long. 8192 gives comfortable headroom; override with --max-tokens if needed.
+DEFAULT_MAX_TOKENS = 8192
 
 
 def get_image_media_type(filepath: Path) -> str:
@@ -71,6 +89,19 @@ def read_image_bytes(filepath: Path) -> bytes:
     """
     with open(filepath, "rb") as f:
         return f.read()
+
+
+ANTI_REFERENCE_PREFIXES = ("not-", "anti-")
+
+
+def is_anti_reference(image_path: Path) -> bool:
+    """
+    An image is treated as an anti-reference ("what to avoid") when its
+    filename starts with `not-` or `anti-`, per SPEC.md. Using a prefix —
+    not a substring — avoids false-positives on filenames like
+    `notebook-ui.png` or `antique-type.png`.
+    """
+    return image_path.stem.lower().startswith(ANTI_REFERENCE_PREFIXES)
 
 
 def collect_images(folder: Path) -> list[Path]:
@@ -137,21 +168,37 @@ Pay close attention to any handwritten notes, sticky notes, annotations, or
 labels visible in the images — these are the designer's direct commentary and 
 should be weighted heavily.
 
-If a filename contains "not" or "anti" or similar negative signals, treat that 
-image as an anti-reference (what to avoid)."""
+If a filename begins with the prefix "not-" or "anti-" (e.g. not-corporate.png,
+anti-pattern.jpg), treat that image as an anti-reference (what to avoid).
+Only the documented prefixes count — filenames like "notebook-ui.png" or
+"antique-type.png" are normal references, not anti-references."""
 
 
-def build_user_prompt(image_names: list[str], notes: str | None, mood_name: str) -> str:
+def build_user_prompt(images: list[Path], notes: str | None, mood_name: str) -> str:
     """
     Builds the prompt that tells the vision model what we want back.
     The structure here mirrors the mood.md format we want generated.
     This prompt is shared by ALL backends — the protocol is model-agnostic.
+
+    Positive references and anti-references are listed in two clearly
+    labelled blocks so the model doesn't have to infer the distinction
+    from filename heuristics. The classification uses is_anti_reference,
+    matching the convention in SPEC.md.
     """
+    references = [img.name for img in images if not is_anti_reference(img)]
+    anti_references = [img.name for img in images if is_anti_reference(img)]
+
     prompt = f"""Analyse this moodboard and generate a structured mood file called "{mood_name}".
 
-The images in this moodboard are named: {', '.join(image_names)}
+The attached images fall into two groups:
 
+References — absorb these into the mood:
 """
+    prompt += "\n".join(f"- {name}" for name in references) if references else "- (none)"
+    prompt += "\n\nAnti-references — the mood must explicitly NOT look or feel like these. Do not absorb their aesthetic; instead, use them to populate the Anti-References section with specific things to avoid:\n"
+    prompt += "\n".join(f"- {name}" for name in anti_references) if anti_references else "- (none provided)"
+    prompt += "\n\n"
+
     if notes:
         prompt += f"""The designer also left these notes:
 
@@ -235,6 +282,8 @@ def analyse_with_claude(
     images: list[Path],
     notes: str | None,
     mood_name: str,
+    model: str,
+    max_tokens: int,
 ) -> str:
     """
     Sends all the moodboard images to Claude's vision API.
@@ -272,21 +321,49 @@ def analyse_with_claude(
         })
 
     # Add the main analysis prompt at the end
-    image_names = [img.name for img in images]
     content.append({
         "type": "text",
-        "text": build_user_prompt(image_names, notes, mood_name),
+        "text": build_user_prompt(images, notes, mood_name),
     })
 
-    print(f"  Sending {len(images)} images to Claude for analysis...")
+    print(f"  Sending {len(images)} images to Claude ({model}) for analysis...")
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        model=model,
+        max_tokens=max_tokens,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
 
-    return response.content[0].text
+    stop_reason = getattr(response, "stop_reason", None)
+
+    # A refusal comes back with stop_reason="refusal" in newer Claude models.
+    if stop_reason == "refusal":
+        print("\n  ✗ Claude declined to generate a mood from these images.")
+        print("    Try removing any images that may have triggered a refusal,")
+        print("    or switch backends with --model gemini.\n")
+        sys.exit(1)
+
+    # The API can return non-text blocks (e.g. thinking, tool_use) mixed in;
+    # pull out only the text blocks and concatenate.
+    text_parts = [
+        getattr(block, "text", "")
+        for block in (response.content or [])
+        if getattr(block, "type", None) == "text"
+    ]
+    text = "".join(text_parts).strip()
+
+    if not text:
+        block_types = [getattr(b, "type", "?") for b in (response.content or [])]
+        print("\n  ✗ Claude returned no text content.")
+        print(f"    stop_reason: {stop_reason}")
+        print(f"    content blocks: {block_types}\n")
+        sys.exit(1)
+
+    if stop_reason == "max_tokens":
+        print(f"\n  ⚠ Output hit the max_tokens cap ({max_tokens}); the mood may be truncated.")
+        print("    Re-run with --max-tokens <larger> if the file looks cut off.\n")
+
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +374,8 @@ def analyse_with_gemini(
     images: list[Path],
     notes: str | None,
     mood_name: str,
+    model: str,
+    max_tokens: int,
 ) -> str:
     """
     Sends all the moodboard images to Gemini's vision API.
@@ -345,27 +424,52 @@ def analyse_with_gemini(
         )
 
     # Add the main analysis prompt
-    image_names = [img.name for img in images]
     parts.append(
         types.Part.from_text(
-            text=build_user_prompt(image_names, notes, mood_name)
+            text=build_user_prompt(images, notes, mood_name)
         )
     )
 
-    print(f"  Sending {len(images)} images to Gemini for analysis...")
+    print(f"  Sending {len(images)} images to Gemini ({model}) for analysis...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=types.Content(
             role="user",
             parts=parts,
         ),
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=4096,
+            max_output_tokens=max_tokens,
         ),
     )
 
-    return response.text
+    # Prompt-level block (safety filter rejected the input entirely).
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = getattr(prompt_feedback, "block_reason", None) if prompt_feedback else None
+    if block_reason:
+        print(f"\n  ✗ Gemini blocked the request: {block_reason}")
+        print("    Try removing any images that may have triggered a safety filter,")
+        print("    or switch backends with --model claude.\n")
+        sys.exit(1)
+
+    text = (getattr(response, "text", None) or "").strip()
+    candidates = getattr(response, "candidates", None) or []
+    finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+
+    if not text:
+        print("\n  ✗ Gemini returned no text content.")
+        if finish_reason is not None:
+            print(f"    finish_reason: {finish_reason}")
+        print("    This usually means the response was blocked or empty. Try")
+        print("    different images, or switch backends with --model claude.\n")
+        sys.exit(1)
+
+    # finish_reason is an enum in google-genai; its string form ends in MAX_TOKENS.
+    if finish_reason is not None and str(finish_reason).endswith("MAX_TOKENS"):
+        print(f"\n  ⚠ Output hit the max_output_tokens cap ({max_tokens}); the mood may be truncated.")
+        print("    Re-run with --max-tokens <larger> if the file looks cut off.\n")
+
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +519,32 @@ def main():
         default="claude",
         help="Which vision model to use (default: claude)",
     )
+    parser.add_argument(
+        "--claude-model",
+        type=str,
+        default=DEFAULT_CLAUDE_MODEL,
+        help=f"Claude model snapshot to use (default: {DEFAULT_CLAUDE_MODEL})",
+    )
+    parser.add_argument(
+        "--gemini-model",
+        type=str,
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini model to use (default: {DEFAULT_GEMINI_MODEL})",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help=f"Max tokens in the generated mood (default: {DEFAULT_MAX_TOKENS})",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the prompt and image list without calling the API (no tokens spent)",
+    )
     args = parser.parse_args()
+
+    model_string = args.claude_model if args.model == "claude" else args.gemini_model
 
     # ---- Validate input ----
     if not args.input.exists():
@@ -435,25 +564,54 @@ def main():
     print(f"\n  ◉ mood-protocol")
     print(f"  ─────────────────────────────")
     print(f"  Mood name:  {args.name}")
-    print(f"  Model:      {args.model}")
+    print(f"  Model:      {args.model} ({model_string})")
     print(f"  Source:     {args.input.resolve()}")
     print(f"  Images:     {len(images)}")
     for img in images:
         # Mark anti-references with a different symbol so the designer
         # can see at a glance which images are "avoid this" signals
-        prefix = "  ⊘" if "not" in img.stem.lower() or "anti" in img.stem.lower() else "  ◦"
+        prefix = "  ⊘" if is_anti_reference(img) else "  ◦"
         print(f"    {prefix} {img.name}")
     if notes:
         print(f"  Notes:      ✓ found notes.md")
     print(f"  ─────────────────────────────")
 
+    # ---- Dry run: preview the prompt without spending any tokens ----
+    if args.dry_run:
+        print("\n  ◉ DRY RUN — no API call will be made, no mood.md will be written.\n")
+        print("  ── System prompt ─────────────")
+        print(SYSTEM_PROMPT)
+        print("\n  ── User prompt ───────────────")
+        print(build_user_prompt(images, notes, args.name))
+        print("\n  ── Images that would be sent ─")
+        for img in images:
+            marker = "anti-reference" if is_anti_reference(img) else "reference"
+            print(f"    {img.name}  ({marker})")
+        print("\n  Re-run without --dry-run to actually generate the mood.\n")
+        return
+
     # ---- Analyse using the chosen backend ----
     analyse_fn = BACKENDS[args.model]
-    mood_content = analyse_fn(images, notes, args.name)
+    mood_content = analyse_fn(images, notes, args.name, model_string, args.max_tokens)
+
+    # ---- Sanity-check the response before writing ----
+    # The prompt asks for a document that starts with '# Mood: <name>'. If
+    # that heading is missing we very likely got a refusal, an apology, or
+    # some other non-mood text. Refuse to write it rather than clobber the
+    # user's mood.md with junk.
+    if "# Mood" not in mood_content:
+        print("\n  ✗ The model returned a response that doesn't look like a mood file.")
+        print("    Expected a markdown document starting with '# Mood: ...'")
+        print(f"    First 200 chars of what came back:\n")
+        print(f"    {mood_content[:200]!r}\n")
+        print("    Nothing was written. Try a different model, adjust your notes,")
+        print("    or remove images that may have been refused.\n")
+        sys.exit(1)
 
     # ---- Write output ----
     output_path = args.output / "mood.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    mood_content = mood_content.rstrip() + f"\n\n<!-- mood-protocol v{SPEC_VERSION} -->\n"
     output_path.write_text(mood_content, encoding="utf-8")
 
     print(f"  ✓ Generated {output_path.resolve()}")
