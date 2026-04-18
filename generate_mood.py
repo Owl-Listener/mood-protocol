@@ -36,6 +36,11 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 # Spec version stamped into the footer of every generated mood.md, per SPEC.md.
 SPEC_VERSION = "0.1.0"
 
+# Default model strings. Override on the CLI with --claude-model / --gemini-model
+# when a newer snapshot is out, so the script doesn't rot as models are retired.
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
 
 def get_image_media_type(filepath: Path) -> str:
     """
@@ -238,6 +243,7 @@ def analyse_with_claude(
     images: list[Path],
     notes: str | None,
     mood_name: str,
+    model: str,
 ) -> str:
     """
     Sends all the moodboard images to Claude's vision API.
@@ -281,9 +287,9 @@ def analyse_with_claude(
         "text": build_user_prompt(image_names, notes, mood_name),
     })
 
-    print(f"  Sending {len(images)} images to Claude for analysis...")
+    print(f"  Sending {len(images)} images to Claude ({model}) for analysis...")
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=model,
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
@@ -300,6 +306,7 @@ def analyse_with_gemini(
     images: list[Path],
     notes: str | None,
     mood_name: str,
+    model: str,
 ) -> str:
     """
     Sends all the moodboard images to Gemini's vision API.
@@ -355,9 +362,9 @@ def analyse_with_gemini(
         )
     )
 
-    print(f"  Sending {len(images)} images to Gemini for analysis...")
+    print(f"  Sending {len(images)} images to Gemini ({model}) for analysis...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=types.Content(
             role="user",
             parts=parts,
@@ -418,7 +425,21 @@ def main():
         default="claude",
         help="Which vision model to use (default: claude)",
     )
+    parser.add_argument(
+        "--claude-model",
+        type=str,
+        default=DEFAULT_CLAUDE_MODEL,
+        help=f"Claude model snapshot to use (default: {DEFAULT_CLAUDE_MODEL})",
+    )
+    parser.add_argument(
+        "--gemini-model",
+        type=str,
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini model to use (default: {DEFAULT_GEMINI_MODEL})",
+    )
     args = parser.parse_args()
+
+    model_string = args.claude_model if args.model == "claude" else args.gemini_model
 
     # ---- Validate input ----
     if not args.input.exists():
@@ -438,7 +459,7 @@ def main():
     print(f"\n  ◉ mood-protocol")
     print(f"  ─────────────────────────────")
     print(f"  Mood name:  {args.name}")
-    print(f"  Model:      {args.model}")
+    print(f"  Model:      {args.model} ({model_string})")
     print(f"  Source:     {args.input.resolve()}")
     print(f"  Images:     {len(images)}")
     for img in images:
@@ -452,7 +473,7 @@ def main():
 
     # ---- Analyse using the chosen backend ----
     analyse_fn = BACKENDS[args.model]
-    mood_content = analyse_fn(images, notes, args.name)
+    mood_content = analyse_fn(images, notes, args.name, model_string)
 
     # ---- Write output ----
     output_path = args.output / "mood.md"

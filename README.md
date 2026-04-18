@@ -93,7 +93,11 @@ python generate_mood.py --model gemini             # use Gemini instead
 python generate_mood.py --input ./brand-refs       # custom input folder
 python generate_mood.py --output ./src/design      # custom output location
 python generate_mood.py --name "Dark Mode Variant"  # name your mood
+python generate_mood.py --claude-model claude-sonnet-4-5   # pin a specific Claude snapshot
+python generate_mood.py --gemini-model gemini-2.5-pro      # pin a specific Gemini model
 ```
+
+The defaults (`claude-sonnet-4-20250514`, `gemini-2.5-flash`) are known-good snapshots at time of writing. If a snapshot is retired, pass `--claude-model` / `--gemini-model` with any current model ID — no code change needed.
 
 ## What mood.md looks like
 
