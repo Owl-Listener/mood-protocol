@@ -328,7 +328,36 @@ def analyse_with_claude(
         messages=[{"role": "user", "content": content}],
     )
 
-    return response.content[0].text
+    stop_reason = getattr(response, "stop_reason", None)
+
+    # A refusal comes back with stop_reason="refusal" in newer Claude models.
+    if stop_reason == "refusal":
+        print("\n  ✗ Claude declined to generate a mood from these images.")
+        print("    Try removing any images that may have triggered a refusal,")
+        print("    or switch backends with --model gemini.\n")
+        sys.exit(1)
+
+    # The API can return non-text blocks (e.g. thinking, tool_use) mixed in;
+    # pull out only the text blocks and concatenate.
+    text_parts = [
+        getattr(block, "text", "")
+        for block in (response.content or [])
+        if getattr(block, "type", None) == "text"
+    ]
+    text = "".join(text_parts).strip()
+
+    if not text:
+        block_types = [getattr(b, "type", "?") for b in (response.content or [])]
+        print("\n  ✗ Claude returned no text content.")
+        print(f"    stop_reason: {stop_reason}")
+        print(f"    content blocks: {block_types}\n")
+        sys.exit(1)
+
+    if stop_reason == "max_tokens":
+        print(f"\n  ⚠ Output hit the max_tokens cap ({max_tokens}); the mood may be truncated.")
+        print("    Re-run with --max-tokens <larger> if the file looks cut off.\n")
+
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +437,33 @@ def analyse_with_gemini(
         ),
     )
 
-    return response.text
+    # Prompt-level block (safety filter rejected the input entirely).
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = getattr(prompt_feedback, "block_reason", None) if prompt_feedback else None
+    if block_reason:
+        print(f"\n  ✗ Gemini blocked the request: {block_reason}")
+        print("    Try removing any images that may have triggered a safety filter,")
+        print("    or switch backends with --model claude.\n")
+        sys.exit(1)
+
+    text = (getattr(response, "text", None) or "").strip()
+    candidates = getattr(response, "candidates", None) or []
+    finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+
+    if not text:
+        print("\n  ✗ Gemini returned no text content.")
+        if finish_reason is not None:
+            print(f"    finish_reason: {finish_reason}")
+        print("    This usually means the response was blocked or empty. Try")
+        print("    different images, or switch backends with --model claude.\n")
+        sys.exit(1)
+
+    # finish_reason is an enum in google-genai; its string form ends in MAX_TOKENS.
+    if finish_reason is not None and str(finish_reason).endswith("MAX_TOKENS"):
+        print(f"\n  ⚠ Output hit the max_output_tokens cap ({max_tokens}); the mood may be truncated.")
+        print("    Re-run with --max-tokens <larger> if the file looks cut off.\n")
+
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +568,20 @@ def main():
     # ---- Analyse using the chosen backend ----
     analyse_fn = BACKENDS[args.model]
     mood_content = analyse_fn(images, notes, args.name, model_string, args.max_tokens)
+
+    # ---- Sanity-check the response before writing ----
+    # The prompt asks for a document that starts with '# Mood: <name>'. If
+    # that heading is missing we very likely got a refusal, an apology, or
+    # some other non-mood text. Refuse to write it rather than clobber the
+    # user's mood.md with junk.
+    if "# Mood" not in mood_content:
+        print("\n  ✗ The model returned a response that doesn't look like a mood file.")
+        print("    Expected a markdown document starting with '# Mood: ...'")
+        print(f"    First 200 chars of what came back:\n")
+        print(f"    {mood_content[:200]!r}\n")
+        print("    Nothing was written. Try a different model, adjust your notes,")
+        print("    or remove images that may have been refused.\n")
+        sys.exit(1)
 
     # ---- Write output ----
     output_path = args.output / "mood.md"
