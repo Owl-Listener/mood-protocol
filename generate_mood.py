@@ -168,17 +168,31 @@ Only the documented prefixes count — filenames like "notebook-ui.png" or
 "antique-type.png" are normal references, not anti-references."""
 
 
-def build_user_prompt(image_names: list[str], notes: str | None, mood_name: str) -> str:
+def build_user_prompt(images: list[Path], notes: str | None, mood_name: str) -> str:
     """
     Builds the prompt that tells the vision model what we want back.
     The structure here mirrors the mood.md format we want generated.
     This prompt is shared by ALL backends — the protocol is model-agnostic.
+
+    Positive references and anti-references are listed in two clearly
+    labelled blocks so the model doesn't have to infer the distinction
+    from filename heuristics. The classification uses is_anti_reference,
+    matching the convention in SPEC.md.
     """
+    references = [img.name for img in images if not is_anti_reference(img)]
+    anti_references = [img.name for img in images if is_anti_reference(img)]
+
     prompt = f"""Analyse this moodboard and generate a structured mood file called "{mood_name}".
 
-The images in this moodboard are named: {', '.join(image_names)}
+The attached images fall into two groups:
 
+References — absorb these into the mood:
 """
+    prompt += "\n".join(f"- {name}" for name in references) if references else "- (none)"
+    prompt += "\n\nAnti-references — the mood must explicitly NOT look or feel like these. Do not absorb their aesthetic; instead, use them to populate the Anti-References section with specific things to avoid:\n"
+    prompt += "\n".join(f"- {name}" for name in anti_references) if anti_references else "- (none provided)"
+    prompt += "\n\n"
+
     if notes:
         prompt += f"""The designer also left these notes:
 
@@ -301,10 +315,9 @@ def analyse_with_claude(
         })
 
     # Add the main analysis prompt at the end
-    image_names = [img.name for img in images]
     content.append({
         "type": "text",
-        "text": build_user_prompt(image_names, notes, mood_name),
+        "text": build_user_prompt(images, notes, mood_name),
     })
 
     print(f"  Sending {len(images)} images to Claude ({model}) for analysis...")
@@ -376,10 +389,9 @@ def analyse_with_gemini(
         )
 
     # Add the main analysis prompt
-    image_names = [img.name for img in images]
     parts.append(
         types.Part.from_text(
-            text=build_user_prompt(image_names, notes, mood_name)
+            text=build_user_prompt(images, notes, mood_name)
         )
     )
 
