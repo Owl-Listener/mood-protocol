@@ -17,7 +17,7 @@ We can write `SKILL.md` files to tell agents *how* to build things. But we have 
 | `SKILL.md` | "Here's how to do things" (procedural) |
 | `mood.md` | "Here's what it should feel like" (perceptual) |
 
-Together, they give an agent both craft knowledge and aesthetic direction — the full picture of what a designer brings to a project.
+Together, they give an agent both craft knowledge and aesthetic direction.
 
 ## Quick start (no setup required)
 
