@@ -33,6 +33,9 @@ from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
+# Spec version stamped into the footer of every generated mood.md, per SPEC.md.
+SPEC_VERSION = "0.1.0"
+
 
 def get_image_media_type(filepath: Path) -> str:
     """
@@ -454,6 +457,7 @@ def main():
     # ---- Write output ----
     output_path = args.output / "mood.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    mood_content = mood_content.rstrip() + f"\n\n<!-- mood-protocol v{SPEC_VERSION} -->\n"
     output_path.write_text(mood_content, encoding="utf-8")
 
     print(f"  ✓ Generated {output_path.resolve()}")
