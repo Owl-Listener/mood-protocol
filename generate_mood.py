@@ -41,6 +41,10 @@ SPEC_VERSION = "0.1.0"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
+# A dense mood.md with many images, references, and anti-references can run
+# long. 8192 gives comfortable headroom; override with --max-tokens if needed.
+DEFAULT_MAX_TOKENS = 8192
+
 
 def get_image_media_type(filepath: Path) -> str:
     """
@@ -244,6 +248,7 @@ def analyse_with_claude(
     notes: str | None,
     mood_name: str,
     model: str,
+    max_tokens: int,
 ) -> str:
     """
     Sends all the moodboard images to Claude's vision API.
@@ -290,7 +295,7 @@ def analyse_with_claude(
     print(f"  Sending {len(images)} images to Claude ({model}) for analysis...")
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=max_tokens,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
@@ -307,6 +312,7 @@ def analyse_with_gemini(
     notes: str | None,
     mood_name: str,
     model: str,
+    max_tokens: int,
 ) -> str:
     """
     Sends all the moodboard images to Gemini's vision API.
@@ -371,7 +377,7 @@ def analyse_with_gemini(
         ),
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=4096,
+            max_output_tokens=max_tokens,
         ),
     )
 
@@ -437,6 +443,12 @@ def main():
         default=DEFAULT_GEMINI_MODEL,
         help=f"Gemini model to use (default: {DEFAULT_GEMINI_MODEL})",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help=f"Max tokens in the generated mood (default: {DEFAULT_MAX_TOKENS})",
+    )
     args = parser.parse_args()
 
     model_string = args.claude_model if args.model == "claude" else args.gemini_model
@@ -473,7 +485,7 @@ def main():
 
     # ---- Analyse using the chosen backend ----
     analyse_fn = BACKENDS[args.model]
-    mood_content = analyse_fn(images, notes, args.name, model_string)
+    mood_content = analyse_fn(images, notes, args.name, model_string, args.max_tokens)
 
     # ---- Write output ----
     output_path = args.output / "mood.md"
