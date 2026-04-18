@@ -85,6 +85,19 @@ def read_image_bytes(filepath: Path) -> bytes:
         return f.read()
 
 
+ANTI_REFERENCE_PREFIXES = ("not-", "anti-")
+
+
+def is_anti_reference(image_path: Path) -> bool:
+    """
+    An image is treated as an anti-reference ("what to avoid") when its
+    filename starts with `not-` or `anti-`, per SPEC.md. Using a prefix —
+    not a substring — avoids false-positives on filenames like
+    `notebook-ui.png` or `antique-type.png`.
+    """
+    return image_path.stem.lower().startswith(ANTI_REFERENCE_PREFIXES)
+
+
 def collect_images(folder: Path) -> list[Path]:
     """
     Scans the mood folder and returns all supported image files,
@@ -149,8 +162,10 @@ Pay close attention to any handwritten notes, sticky notes, annotations, or
 labels visible in the images — these are the designer's direct commentary and 
 should be weighted heavily.
 
-If a filename contains "not" or "anti" or similar negative signals, treat that 
-image as an anti-reference (what to avoid)."""
+If a filename begins with the prefix "not-" or "anti-" (e.g. not-corporate.png,
+anti-pattern.jpg), treat that image as an anti-reference (what to avoid).
+Only the documented prefixes count — filenames like "notebook-ui.png" or
+"antique-type.png" are normal references, not anti-references."""
 
 
 def build_user_prompt(image_names: list[str], notes: str | None, mood_name: str) -> str:
@@ -477,7 +492,7 @@ def main():
     for img in images:
         # Mark anti-references with a different symbol so the designer
         # can see at a glance which images are "avoid this" signals
-        prefix = "  ⊘" if "not" in img.stem.lower() or "anti" in img.stem.lower() else "  ◦"
+        prefix = "  ⊘" if is_anti_reference(img) else "  ◦"
         print(f"    {prefix} {img.name}")
     if notes:
         print(f"  Notes:      ✓ found notes.md")
