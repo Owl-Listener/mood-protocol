@@ -109,6 +109,10 @@ A generated `mood.md` contains structured, actionable design direction:
 - **Anti-References** — what this explicitly is NOT
 - **Agent Instructions** — actionable paragraph for any AI agent
 
+## See a full example
+
+A complete worked example lives in [`examples/folk-maximalism/`](examples/folk-maximalism/) — two moodboard screenshots, the designer's notes, and the generated `mood.md`. Its README shows the exact command that produced the output, so you can regenerate it yourself and compare how different models read the same images.
+
 ## Using mood.md with agents
 
 Once generated, `mood.md` works with any AI assistant or coding agent. Place it in your project root alongside your code, and reference it in prompts:
