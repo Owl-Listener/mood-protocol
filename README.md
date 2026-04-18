@@ -167,7 +167,7 @@ Inside each subfolder the `mood/` directory holds the images you feed in, and th
 This protocol is tool-agnostic. Your moodboard images can come from:
 
 - **Figma** — export a frame as PNG
-- **Stitch** — screenshot or export
+- **Stitch** (Google's AI UI design tool) — screenshot or export
 - **Miro / FigJam** — screenshot your board
 - **Pinterest** — save images to a folder
 - **Are.na** — download your channel
