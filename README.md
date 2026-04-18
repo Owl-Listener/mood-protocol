@@ -49,15 +49,15 @@ If you want to run this from the command line without copy-pasting, there's a Py
 
 ```shell
 # For Claude
-pip install -r requirements-claude.txt
+python -m pip install -r requirements-claude.txt
 export ANTHROPIC_API_KEY=your-key-here
 
 # For Gemini
-pip install -r requirements-gemini.txt
+python -m pip install -r requirements-gemini.txt
 export GEMINI_API_KEY=your-key-here
 ```
 
-Each backend has its own pinned requirements file so you only install what you'll actually use. The bare `pip install anthropic` / `pip install google-genai` commands still work if you'd rather not use the requirements files.
+Each backend has its own pinned requirements file so you only install what you'll actually use. `python -m pip` is a touch more robust than bare `pip` on systems where `pip` resolves to a different Python than `python`; bare `pip install anthropic` / `pip install google-genai` also still works if you'd rather skip the requirements files.
 
 ### Create a mood folder and generate
 

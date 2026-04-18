@@ -13,10 +13,16 @@ Usage:
     python generate_mood.py --input ./my-refs         # custom input folder
     python generate_mood.py --output ./project        # custom output location
     python generate_mood.py --name "Brand V2"         # give the mood a name
+    python generate_mood.py --claude-model <id>       # pin a specific Claude snapshot
+    python generate_mood.py --gemini-model <id>       # pin a specific Gemini model
+    python generate_mood.py --max-tokens 16384        # raise the output cap for dense moods
+    python generate_mood.py --dry-run                 # preview the prompt; no API call, no tokens
 
 Requires (install only what you need):
-    For Claude:   pip install anthropic       + set ANTHROPIC_API_KEY
-    For Gemini:   pip install google-genai    + set GEMINI_API_KEY
+    For Claude:   python -m pip install -r requirements-claude.txt  + set ANTHROPIC_API_KEY
+    For Gemini:   python -m pip install -r requirements-gemini.txt  + set GEMINI_API_KEY
+
+    (Bare 'pip install anthropic' / 'pip install google-genai' also works.)
 """
 
 import base64
