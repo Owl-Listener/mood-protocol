@@ -98,11 +98,14 @@ python generate_mood.py --name "Dark Mode Variant"  # name your mood
 python generate_mood.py --claude-model claude-sonnet-4-5   # pin a specific Claude snapshot
 python generate_mood.py --gemini-model gemini-2.5-pro      # pin a specific Gemini model
 python generate_mood.py --max-tokens 16384                 # raise the output cap for very dense moods
+python generate_mood.py --dry-run                          # preview the prompt without calling the API
 ```
 
 The defaults (`claude-sonnet-4-20250514`, `gemini-2.5-flash`) are known-good snapshots at time of writing. If a snapshot is retired, pass `--claude-model` / `--gemini-model` with any current model ID — no code change needed.
 
 The default `--max-tokens` is `8192`, which comfortably fits a full mood with all optional sections. If you're generating from a very dense moodboard and the output looks truncated, bump it higher.
+
+`--dry-run` is useful the first time you try the tool: it prints the exact system prompt, user prompt, and image/anti-reference list the script *would* send, without making an API call or spending any tokens. Run it once to see what the model will see.
 
 ## What mood.md looks like
 

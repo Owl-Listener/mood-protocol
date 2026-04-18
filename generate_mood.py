@@ -531,6 +531,11 @@ def main():
         default=DEFAULT_MAX_TOKENS,
         help=f"Max tokens in the generated mood (default: {DEFAULT_MAX_TOKENS})",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the prompt and image list without calling the API (no tokens spent)",
+    )
     args = parser.parse_args()
 
     model_string = args.claude_model if args.model == "claude" else args.gemini_model
@@ -564,6 +569,20 @@ def main():
     if notes:
         print(f"  Notes:      ✓ found notes.md")
     print(f"  ─────────────────────────────")
+
+    # ---- Dry run: preview the prompt without spending any tokens ----
+    if args.dry_run:
+        print("\n  ◉ DRY RUN — no API call will be made, no mood.md will be written.\n")
+        print("  ── System prompt ─────────────")
+        print(SYSTEM_PROMPT)
+        print("\n  ── User prompt ───────────────")
+        print(build_user_prompt(images, notes, args.name))
+        print("\n  ── Images that would be sent ─")
+        for img in images:
+            marker = "anti-reference" if is_anti_reference(img) else "reference"
+            print(f"    {img.name}  ({marker})")
+        print("\n  Re-run without --dry-run to actually generate the mood.\n")
+        return
 
     # ---- Analyse using the chosen backend ----
     analyse_fn = BACKENDS[args.model]
